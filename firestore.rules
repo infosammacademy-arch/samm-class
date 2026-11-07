@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Head admin: this email, once confirmed. Change the email here if you change it in firebase-config.js.
+    function head() {
+      return request.auth != null
+        && request.auth.token.email == 'info.sammacademy@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function hasProfile() { return exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function active() {
+      return request.auth != null && (head() ||
+        (hasProfile() && profile().status == 'active' && profile().role in ['student','tutor','admin']));
+    }
+    function staff() {
+      return request.auth != null && (head() ||
+        (hasProfile() && profile().status == 'active' && profile().role in ['tutor','admin']));
+    }
+    function isAdmin() {
+      return request.auth != null && (head() ||
+        (hasProfile() && profile().status == 'active' && profile().role == 'admin'));
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || staff());
+      // Anyone can create their own account record, but only as an active student or a pending request.
+      allow create: if request.auth != null && request.auth.uid == uid && (
+        (request.resource.data.role == 'student' && request.resource.data.status == 'active') ||
+        (request.resource.data.role == 'pending' && request.resource.data.status == 'pending'));
+      // People can edit only their own name, phone and level. Roles and status are changed by the head admin only.
+      allow update: if head() || (request.auth != null && request.auth.uid == uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','phone','level']));
+      allow delete: if head();
+    }
+
+    match /classes/{id}   { allow read: if active(); allow write: if staff(); }
+    match /lessons/{id}   { allow read: if active(); allow write: if staff(); }
+    match /materials/{id} { allow read: if active(); allow write: if staff(); }
+    match /quizzes/{id}   { allow read: if active(); allow write: if staff(); }
+
+    match /results/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || staff());
+      allow write: if active() && request.auth.uid == uid;
+    }
+    match /payments/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+  }
+}
